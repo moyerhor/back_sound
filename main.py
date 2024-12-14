@@ -321,131 +321,80 @@ class AudioRecorderApp(App):
             return
 
         buffer_duration = float(self.duration_input.text)
+        recordings_folder = "Recordings"
+        os.makedirs(recordings_folder, exist_ok=True)
 
-        if self.separate_audio_checkbox.active:
-            for app, frames in self.frames.items():
-                current_frames = list(frames)
+        for app, frames in self.frames.items():
+            current_frames = list(frames)
+            
+            # Проверка наличия данных в буфере
+            if not current_frames:
+                print(f"No data to save for {app}")
+                continue
 
-                if not current_frames:
-                    continue
+            audio_data = np.concatenate(current_frames)
+            format_type = self.format_spinner.text
+            bitrate = self.bitrate_spinner.text
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-                self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
+            if app == 'Microphone':
+                filename = os.path.join(recordings_folder, f"microphone_recording_{timestamp}.{format_type.lower()}")
+            elif app == 'combined':
+                filename = os.path.join(recordings_folder, f"combined_recording_{timestamp}.{format_type.lower()}")
+            else:
+                app_name = app.split(":")[0]
+                filename = os.path.join(recordings_folder, f"{app_name}_recording_{timestamp}.{format_type.lower()}")
 
-                audio_data = np.concatenate(current_frames)
-                format_type = self.format_spinner.text
-                bitrate = self.bitrate_spinner.text
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                recordings_folder = "Recordings"
+            temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}_{app}.wav")
 
-                if app == 'Microphone':
-                    filename = os.path.join(recordings_folder, f"microphone_recording_{timestamp}.{format_type.lower()}")
-                else:
-                    app_name = app.split(":")[0]
-                    filename = os.path.join(recordings_folder, f"{app_name}_recording_{timestamp}.{format_type.lower()}")
+            try:
+                with wave.open(temp_wav, 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)
+                    wf.setframerate(44100)
+                    wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
 
-                temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}_{app}.wav")
-                os.makedirs(recordings_folder, exist_ok=True)
-
-                try:
-                    with wave.open(temp_wav, 'wb') as wf:
-                        wf.setnchannels(1)
-                        wf.setsampwidth(2)
-                        wf.setframerate(44100)
-                        wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-
-                    if format_type == 'WAV':
-                        os.replace(temp_wav, filename)
-                    elif format_type == 'MP3':
-                        try:
-                            audio = AudioSegment.from_wav(temp_wav)
-                            audio.export(
-                                filename,
-                                format="mp3",
-                                bitrate=bitrate,
-                                parameters=["-q:a", "0"]
-                            )
-                        except Exception as e:
-                            print(f"Error converting to MP3: {e}")
-                            try:
-                                from pydub.utils import which
-                                AudioSegment.converter = which("ffmpeg")
-                                audio = AudioSegment.from_wav(temp_wav)
-                                audio.export(filename, format="mp3", bitrate=bitrate)
-                            except Exception as e2:
-                                print(f"Alternative method also failed: {e2}")
-                    elif format_type == 'FLAC':
-                        sf.write(filename, audio_data, 44100, format='FLAC')
-                    elif format_type == 'OGG':
-                        sf.write(filename, audio_data, 44100, format='OGG')
-
-                    if format_type != 'WAV' and os.path.exists(temp_wav):
-                        os.remove(temp_wav)
-
-                    print(f"Saved to {filename}")
-                    duration = len(audio_data) / 44100
-                    print(f"Recording duration: {duration:.2f} seconds")
-
-                except Exception as e:
-                    print(f"Error saving audio: {e}")
-                    if os.path.exists(temp_wav):
-                        os.remove(temp_wav)
-        else:
-            if 'combined' in self.frames:
-                current_frames = list(self.frames['combined'])
-                if current_frames:
-                    audio_data = np.concatenate(current_frames)
-                    format_type = self.format_spinner.text
-                    bitrate = self.bitrate_spinner.text
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    recordings_folder = "Recordings"
-                    filename = os.path.join(recordings_folder, f"combined_recording_{timestamp}.{format_type.lower()}")
-                    temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}.wav")
-
-                    os.makedirs(recordings_folder, exist_ok=True)
-
+                if format_type == 'WAV':
+                    os.replace(temp_wav, filename)
+                elif format_type == 'MP3':
                     try:
-                        with wave.open(temp_wav, 'wb') as wf:
-                            wf.setnchannels(1)
-                            wf.setsampwidth(2)
-                            wf.setframerate(44100)
-                            wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-
-                        if format_type == 'WAV':
-                            os.replace(temp_wav, filename)
-                        elif format_type == 'MP3':
-                            try:
-                                audio = AudioSegment.from_wav(temp_wav)
-                                audio.export(
-                                    filename,
-                                    format="mp3",
-                                    bitrate=bitrate,
-                                    parameters=["-q:a", "0"]
-                                )
-                            except Exception as e:
-                                print(f"Error converting to MP3: {e}")
-                                try:
-                                    from pydub.utils import which
-                                    AudioSegment.converter = which("ffmpeg")
-                                    audio = AudioSegment.from_wav(temp_wav)
-                                    audio.export(filename, format="mp3", bitrate=bitrate)
-                                except Exception as e2:
-                                    print(f"Alternative method also failed: {e2}")
-                        elif format_type == 'FLAC':
-                            sf.write(filename, audio_data, 44100, format='FLAC')
-                        elif format_type == 'OGG':
-                            sf.write(filename, audio_data, 44100, format='OGG')
-
-                        if format_type != 'WAV' and os.path.exists(temp_wav):
-                            os.remove(temp_wav)
-
-                        print(f"Saved to {filename}")
-                        duration = len(audio_data) / 44100
-                        print(f"Recording duration: {duration:.2f} seconds")
-
+                        audio = AudioSegment.from_wav(temp_wav)
+                        audio.export(
+                            filename,
+                            format="mp3",
+                            bitrate=bitrate,
+                            parameters=["-q:a", "0"]
+                        )
                     except Exception as e:
-                        print(f"Error saving audio: {e}")
-                        if os.path.exists(temp_wav):
-                            os.remove(temp_wav)
+                        print(f"Error converting to MP3: {e}")
+                        try:
+                            from pydub.utils import which
+                            AudioSegment.converter = which("ffmpeg")
+                            audio = AudioSegment.from_wav(temp_wav)
+                            audio.export(filename, format="mp3", bitrate=bitrate)
+                        except Exception as e2:
+                            print(f"Alternative method also failed: {e2}")
+                elif format_type == 'FLAC':
+                    sf.write(filename, audio_data, 44100, format='FLAC')
+                elif format_type == 'OGG':
+                    sf.write(filename, audio_data, 44100, format='OGG')
+
+                if format_type != 'WAV' and os.path.exists(temp_wav):
+                    os.remove(temp_wav)
+
+                print(f"Saved {app} to {filename}")
+                duration = len(audio_data) / 44100
+                print(f"Recording duration: {duration:.2f} seconds")
+
+                # Очистка буфера после успешного сохранения
+                if self.separate_audio_checkbox.active or app == 'combined':
+                  self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
+
+
+            except Exception as e:
+                print(f"Error saving audio for {app}: {e}")
+                if os.path.exists(temp_wav):
+                    os.remove(temp_wav)
 
     def record_audio(self, device_index, app_name):
         FORMAT = pyaudio.paFloat32
