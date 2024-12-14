@@ -32,14 +32,10 @@ import chardet
 import ctypes
 import logging
 
-# Set the logging level for all loggers to WARNING
 logging.basicConfig(level=logging.WARNING)
-
-# Set the logging level for pycaw specifically to WARNING
 logging.getLogger('pycaw').setLevel(logging.WARNING)
 
 def get_app_name_from_pid(pid):
-    """Get application name from process ID."""
     try:
         process = psutil.Process(pid)
         return process.name()
@@ -47,20 +43,20 @@ def get_app_name_from_pid(pid):
         return "Unknown"
 
 class CheckBoxLabel(ToggleButtonBehavior, Label):
-    pass 
+    pass
 
 class AudioRecorderApp(App):
     CHUNK = 1024
-    GAIN = 1.0  # Default gain value, adjust as needed
+    GAIN = 1.0
 
     def build(self):
         self.title = 'Audio Recorder'
         self.settings_file = 'recorder_settings.json'
 
         self.is_recording = False
-        self.frames = {}  # Dictionary to store frames for each app
+        self.frames = {}
         self.p = pyaudio.PyAudio()
-        self.streams = {}  # Dictionary to store streams
+        self.streams = {}
         self.recording_threads = {}
         self.key_thread = None
         self.stop_recording = False
@@ -71,7 +67,6 @@ class AudioRecorderApp(App):
 
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
-        # Apps Selection (Modified for Multiple Selection)
         self.apps_grid = GridLayout(cols=1, size_hint_y=None)
         self.apps_grid.bind(minimum_height=self.apps_grid.setter('height'))
 
@@ -177,12 +172,10 @@ class AudioRecorderApp(App):
         self.update_apps_list()
 
     def update_apps_list(self, dt=0):
-        # Temporarily suppress logging
         original_level = logging.getLogger().level
         logging.getLogger().setLevel(logging.WARNING)
 
         try:
-            # Сохраняем текущее состояние выбранных приложений
             current_selected_apps = set(self.selected_apps)
 
             apps = self.get_running_applications_with_audio()
@@ -198,7 +191,6 @@ class AudioRecorderApp(App):
                     checkbox = CheckBox(size_hint_x=0.2)
                     checkbox.bind(active=self.on_app_checkbox_update)
 
-                    # Восстанавливаем состояние чекбокса
                     if app in current_selected_apps:
                         checkbox.active = True
 
@@ -206,17 +198,15 @@ class AudioRecorderApp(App):
                     layout.add_widget(checkbox)
                     self.apps_grid.add_widget(layout)
         finally:
-            # Restore original logging level
             logging.getLogger().setLevel(original_level)
 
     def on_app_checkbox_update(self, checkbox, value):
-        # Ensure the checkbox has a parent before accessing its children
         if checkbox.parent:
-            app_name = checkbox.parent.children[1].text  # Get text from Label
-            if value:  # If checkbox is active
+            app_name = checkbox.parent.children[1].text
+            if value:
                 if app_name not in self.selected_apps:
                     self.selected_apps.append(app_name)
-            else:  # If checkbox is inactive
+            else:
                 if app_name in self.selected_apps:
                     self.selected_apps.remove(app_name)
 
@@ -249,7 +239,7 @@ class AudioRecorderApp(App):
                         0, 0, device_info.get('name'), -1, buffer, 256, None, None
                     )
                     device_name = buffer.value.decode('utf-8', 'ignore')
-                    devices.append((i + 1, device_name))  # Нумерация начинается с 1
+                    devices.append((i + 1, device_name))
                     self.device_indices[i + 1] = i
 
         except Exception as e:
@@ -260,9 +250,8 @@ class AudioRecorderApp(App):
 
     def toggle_recording(self, instance):
         if not self.is_recording:
-            # Check if no applications are selected
             if not self.selected_apps or self.selected_apps == ['Microphone']:
-                self.selected_apps = ['Microphone']  # Ensure microphone is selected
+                self.selected_apps = ['Microphone']
 
             if not self.device_spinner.text or self.device_spinner.text == "No input devices found":
                 print("Please select a valid input device.")
@@ -333,16 +322,13 @@ class AudioRecorderApp(App):
 
         buffer_duration = float(self.duration_input.text)
 
-        # Если включена опция раздельной записи
         if self.separate_audio_checkbox.active:
             for app, frames in self.frames.items():
                 current_frames = list(frames)
-                
-                # Пропускаем пустые буферы
+
                 if not current_frames:
                     continue
 
-                # Очистка буфера после сохранения
                 self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
 
                 audio_data = np.concatenate(current_frames)
@@ -351,7 +337,6 @@ class AudioRecorderApp(App):
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 recordings_folder = "Recordings"
 
-                # Формируем имя файла в зависимости от источника
                 if app == 'Microphone':
                     filename = os.path.join(recordings_folder, f"microphone_recording_{timestamp}.{format_type.lower()}")
                 else:
@@ -405,7 +390,6 @@ class AudioRecorderApp(App):
                     if os.path.exists(temp_wav):
                         os.remove(temp_wav)
         else:
-            # Для комбинированной записи используем существующую логику
             if 'combined' in self.frames:
                 current_frames = list(self.frames['combined'])
                 if current_frames:
@@ -486,15 +470,12 @@ class AudioRecorderApp(App):
                 data = stream.read(self.CHUNK, exception_on_overflow=False)
                 audio_data = np.frombuffer(data, dtype=np.float32)
 
-                # Ensure the array is writable
                 audio_data = np.array(audio_data, copy=True)
 
-                # Apply gain
                 audio_data *= self.GAIN
 
                 if self.is_recording:
                     if self.separate_audio_checkbox.active:
-                        # Separate recording
                         if app_name == "Microphone":
                             self.frames[app_name].append(audio_data)
                         else:
@@ -504,7 +485,6 @@ class AudioRecorderApp(App):
                             if pid == foreground_pid:
                                 self.frames[app_name].append(audio_data)
                     else:
-                        # Combined recording, including microphone
                         if 'combined' not in self.frames:
                             self.frames['combined'] = deque(maxlen=int(44100 * float(self.duration_input.text) / self.CHUNK))
                         self.frames['combined'].append(audio_data)
