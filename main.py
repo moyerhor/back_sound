@@ -21,31 +21,26 @@ from pycaw.pycaw import AudioUtilities
 import time
 
 class AudioRecorderApp(App):
-    CHUNK = 1024  # Определяем CHUNK как константу класса
+    CHUNK = 1024
     
     def build(self):
         self.title = 'Audio Recorder'
         self.settings_file = 'recorder_settings.json'
         
-        # Initialize variables
         self.is_recording = False
-        self.frames = deque(maxlen=int(44100 * 10 / 1024))  # Buffer for 10 seconds
+        self.frames = deque(maxlen=int(44100 * 10 / 1024))
         self.p = pyaudio.PyAudio()
         self.stream = None
         self.recording_thread = None
         self.key_thread = None
         self.stop_recording = False
         
-        # Load saved settings
         self.settings = self.load_settings()
         
-        # Main layout
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
-        # Get list of running applications
         apps = self.get_running_applications()
         
-        # Spinner for selecting application
         self.app_spinner = Spinner(
             text=self.settings.get('application', 'Select Application'),
             values=apps,
@@ -54,7 +49,6 @@ class AudioRecorderApp(App):
         )
         self.app_spinner.bind(text=self.on_setting_change)
         
-        # Spinner for selecting device
         devices = self.get_input_devices()
         self.device_spinner = Spinner(
             text=self.settings.get('device', 'Select Input Device'),
@@ -64,7 +58,6 @@ class AudioRecorderApp(App):
         )
         self.device_spinner.bind(text=self.on_setting_change)
         
-        # Buffer duration selection
         duration_layout = BoxLayout(size_hint=(1, None), height=44)
         duration_layout.add_widget(Label(text='Buffer Duration (sec):'))
         self.duration_input = TextInput(
@@ -77,7 +70,6 @@ class AudioRecorderApp(App):
         self.duration_input.bind(text=self.on_setting_change)
         duration_layout.add_widget(self.duration_input)
         
-        # Format selection
         self.format_spinner = Spinner(
             text=self.settings.get('format', 'WAV'),
             values=('WAV', 'FLAC', 'OGG', 'MP3'),
@@ -86,7 +78,6 @@ class AudioRecorderApp(App):
         )
         self.format_spinner.bind(text=self.on_setting_change)
         
-        # Bitrate selection
         self.bitrate_spinner = Spinner(
             text=self.settings.get('bitrate', '192k'),
             values=('128k', '192k', '256k', '320k'),
@@ -95,7 +86,6 @@ class AudioRecorderApp(App):
         )
         self.bitrate_spinner.bind(text=self.on_setting_change)
         
-        # Record button
         self.record_button = Button(
             text='Start Recording',
             size_hint=(1, None),
@@ -103,7 +93,6 @@ class AudioRecorderApp(App):
         )
         self.record_button.bind(on_press=self.toggle_recording)
         
-        # Add widgets to layout
         layout.add_widget(self.app_spinner)
         layout.add_widget(self.device_spinner)
         layout.add_widget(duration_layout)
@@ -142,39 +131,30 @@ class AudioRecorderApp(App):
     def get_running_applications(self):
         apps = []
         try:
-            # Получаем все активные аудио сессии
             sessions = AudioUtilities.GetAllSessions()
             for session in sessions:
-                if session.Process and session.Process.name():
-                    # Добавляем только приложения с активными аудио сессиями
-                    app_name = session.Process.name()
-                    if not app_name.lower().endswith('.exe'):
-                        apps.append(app_name)
+                if session.State == 1 or session.State == 2:
+                  if session.Process and session.Process.name():
+                      app_name = session.Process.name()
+                      apps.append(app_name)
         except Exception as e:
             print(f"Error getting audio sessions: {e}")
             return ['No Audio Applications Found']
-        
+
         unique_apps = sorted(list(set(apps)))
         return unique_apps if unique_apps else ['No Audio Applications Found']
     
     def get_input_devices(self):
         devices = []
         try:
-            # Создаем словарь для хранения реальных индексов устройств
             real_indices = {}
-            counter = 1  # Начинаем с 1
+            counter = 1
             
-            # Получаем устройства через PyAudio
             for i in range(self.p.get_device_count()):
                 device = self.p.get_device_info_by_index(i)
                 if device['maxInputChannels'] > 0:
                     name = device['name']
-                    # Пропускаем устройства с исключительно некорректными символами, если необходимо
-                    # Уберите или измените следующую строку
-                    # if any(char in name for char in 'РЂЃЉЊЋЌЍЎЏђѓљњћќѝўџ'):
-                    #     continue
                     
-                    # Проверяем на дубликаты
                     if not any(n == name for _, n in devices):
                         real_indices[counter] = i
                         devices.append((counter, name))
@@ -184,10 +164,8 @@ class AudioRecorderApp(App):
             print(f"Error getting input devices: {e}")
             return ["No input devices found"]
 
-        # Сохраняем словарь соответствия индексов как атрибут класса
         self.device_indices = real_indices
         
-        # Форматируем список устройств
         return [f"{index}: {name}" for index, name in devices] if devices else ["No input devices found"]
     
     def toggle_recording(self, instance):
@@ -196,7 +174,6 @@ class AudioRecorderApp(App):
             if selected_app == 'Select Application' or selected_app == 'No Applications Found':
                 print("Пожалуйста, выберите действительное приложение для записи.")
                 return
-            # Полностью очищаем буфер перед началом новой записи
             buffer_duration = float(self.duration_input.text)
             self.frames = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
             self.start_recording()
@@ -204,7 +181,6 @@ class AudioRecorderApp(App):
             self.stop_recording = True
             self.is_recording = False
             self.record_button.text = 'Start Recording'
-            # Очищаем буфер при остановке
             buffer_duration = float(self.duration_input.text)
             self.frames = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
     
@@ -213,19 +189,15 @@ class AudioRecorderApp(App):
             self.stop_recording = False
             self.is_recording = True
             self.record_button.text = 'Stop Recording'
-            # Создаем новый пустой буфер
             buffer_duration = float(self.duration_input.text)
             self.frames = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
             
-            # Получаем выбранный номер из спиннера
             selected_number = int(self.device_spinner.text.split(':')[0])
             device_index = self.device_indices[selected_number]
             
-            # Запускаем поток записи
             self.recording_thread = threading.Thread(target=self.record_audio, args=(device_index,))
             self.recording_thread.start()
             
-            # Запускаем поток прослушивания клавиш
             self.key_thread = threading.Thread(target=self.check_key)
             self.key_thread.daemon = True
             self.key_thread.start()
@@ -235,7 +207,7 @@ class AudioRecorderApp(App):
     
     def check_key(self):
         last_save_time = 0
-        min_interval = 0.1  # Минимальный интервал между сохранениями в секундах
+        min_interval = 0.1
         
         while self.is_recording:
             if keyboard.is_pressed('k'):
@@ -243,13 +215,12 @@ class AudioRecorderApp(App):
                 if current_time - last_save_time >= min_interval:
                     self.save_current_buffer()
                     last_save_time = current_time
-                    time.sleep(0.1)  # Небольшая задержка после сохранения
+                    time.sleep(0.1)
     
     def save_current_buffer(self):
         if not self.frames:
             return
         
-        # Копируем текущий буфер
         current_frames = list(self.frames)
         
         buffer_duration = float(self.duration_input.text)
@@ -258,22 +229,19 @@ class AudioRecorderApp(App):
         if current_frames:
             audio_data = np.concatenate(current_frames)
             format_type = self.format_spinner.text
-            bitrate = self.bitrate_spinner.text  # Получаем выбранный битрейт
+            bitrate = self.bitrate_spinner.text
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             recordings_folder = "Recordings"
             filename = f"{recordings_folder}/recording_{timestamp}.{format_type.lower()}"
             
-            # Убеждаемся, что папка существует
             os.makedirs(recordings_folder, exist_ok=True)
             
-            # Временный WAV файл
             temp_wav = f"{recordings_folder}/temp_recording_{timestamp}.wav"
 
             try:
-                # Сохраняем временный WAV файл в 16-битном формате
                 with wave.open(temp_wav, 'wb') as wf:
                     wf.setnchannels(1)
-                    wf.setsampwidth(2)  # 2 байта для int16
+                    wf.setsampwidth(2)
                     wf.setframerate(44100)
                     wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
 
@@ -281,13 +249,7 @@ class AudioRecorderApp(App):
                     os.replace(temp_wav, filename)
                 elif format_type == 'MP3':
                     try:
-                        # Используем pydub для конвертации с выбранным битрейтом
                         audio = AudioSegment.from_wav(temp_wav)
-                        # Добавляем проверку наличия ffmpeg
-                        if not AudioSegment.converter:
-                            print("FFmpeg не найден. Убедитесь, что FFmpeg установлен и добавлен в PATH")
-                            return
-                            
                         audio.export(
                             filename, 
                             format="mp3",
@@ -296,7 +258,6 @@ class AudioRecorderApp(App):
                         )
                     except Exception as e:
                         print(f"Ошибка при конвертации в MP3: {e}")
-                        # Попробуем альтернативный метод сохранения, если первый не удался
                         try:
                             from pydub.utils import which
                             AudioSegment.converter = which("ffmpeg")
@@ -309,12 +270,10 @@ class AudioRecorderApp(App):
                 elif format_type == 'OGG':
                     sf.write(filename, audio_data, 44100, format='OGG')
 
-                # Удаляем временный WAV файл, если это не WAV формат
                 if format_type != 'WAV' and os.path.exists(temp_wav):
                     os.remove(temp_wav)
 
                 print(f"Сохранено в {filename}")
-                # Выводим информацию о длительности
                 duration = len(audio_data) / 44100
                 print(f"Длительность записи: {duration:.2f} секунд")
 
