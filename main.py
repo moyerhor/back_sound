@@ -30,7 +30,13 @@ import win32process
 import locale
 import chardet
 import ctypes
+import logging
 
+# Set the logging level for all loggers to WARNING
+logging.basicConfig(level=logging.WARNING)
+
+# Set the logging level for pycaw specifically to WARNING
+logging.getLogger('pycaw').setLevel(logging.WARNING)
 
 def get_app_name_from_pid(pid):
     """Get application name from process ID."""
@@ -45,6 +51,7 @@ class CheckBoxLabel(ToggleButtonBehavior, Label):
 
 class AudioRecorderApp(App):
     CHUNK = 1024
+    GAIN = 1.0  # Default gain value, adjust as needed
 
     def build(self):
         self.title = 'Audio Recorder'
@@ -172,27 +179,48 @@ class AudioRecorderApp(App):
         self.update_apps_list()
 
     def update_apps_list(self, dt=0):
-        apps = self.get_running_applications_with_audio()
-        self.apps_grid.clear_widgets()
+        # Temporarily suppress logging
+        original_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.WARNING)
 
-        if not apps or apps == ['No Audio Applications Found']:
-          
-          
-          self.apps_grid.add_widget(Label(text = "No Audio Applications Found", size_hint_y=None, height=44))
-          self.selected_apps = ['Microphone']
-        else:    
-            for app in apps:
-                checkbox = CheckBoxLabel(text=app, size_hint_y=None, height=44, group = "apps")
-                checkbox.bind(state=self.on_app_checkbox_update)
+        try:
+            # Сохраняем текущее состояние выбранных приложений
+            current_selected_apps = set(self.selected_apps)
 
-                self.apps_grid.add_widget(checkbox)
+            apps = self.get_running_applications_with_audio()
+            self.apps_grid.clear_widgets()
+
+            if not apps or apps == ['No Audio Applications Found']:
+                self.apps_grid.add_widget(Label(text="No Audio Applications Found", size_hint_y=None, height=44))
+                self.selected_apps = ['Microphone']
+            else:
+                for app in apps:
+                    layout = BoxLayout(size_hint_y=None, height=44)
+                    label = Label(text=app, size_hint_x=0.8)
+                    checkbox = CheckBox(size_hint_x=0.2)
+                    checkbox.bind(active=self.on_app_checkbox_update)
+
+                    # Восстанавливаем состояние чекбокса
+                    if app in current_selected_apps:
+                        checkbox.active = True
+
+                    layout.add_widget(label)
+                    layout.add_widget(checkbox)
+                    self.apps_grid.add_widget(layout)
+        finally:
+            # Restore original logging level
+            logging.getLogger().setLevel(original_level)
 
     def on_app_checkbox_update(self, checkbox, value):
-        if value == "down":
-            self.selected_apps.append(checkbox.text)
-        else:
-            if checkbox.text in self.selected_apps:
-                self.selected_apps.remove(checkbox.text)
+        # Ensure the checkbox has a parent before accessing its children
+        if checkbox.parent:
+            app_name = checkbox.parent.children[1].text  # Get text from Label
+            if value:  # If checkbox is active
+                if app_name not in self.selected_apps:
+                    self.selected_apps.append(app_name)
+            else:  # If checkbox is inactive
+                if app_name in self.selected_apps:
+                    self.selected_apps.remove(app_name)
 
     def get_running_applications_with_audio(self):
         apps = set()
@@ -200,11 +228,9 @@ class AudioRecorderApp(App):
             sessions = AudioUtilities.GetAllSessions()
             for session in sessions:
                 if session.Process and session.Process.name():
-                    volume = session.SimpleAudioVolume.GetMasterVolume()
-                    if session.State == 2 and volume > 0:  # Проверяем, что сессия активна и есть звук
-                        app_name = session.Process.name()
-                        pid = session.ProcessId
-                        apps.add(f"{app_name}:{pid}")
+                    app_name = session.Process.name()
+                    pid = session.ProcessId
+                    apps.add(f"{app_name}:{pid}")
         except Exception as e:
             print(f"Error getting audio sessions: {e}")
 
@@ -236,9 +262,9 @@ class AudioRecorderApp(App):
 
     def toggle_recording(self, instance):
         if not self.is_recording:
-            if not self.selected_apps:
-                print("Please select at least one application for recording.")
-                return
+            # Check if no applications are selected
+            if not self.selected_apps or self.selected_apps == ['Microphone']:
+                self.selected_apps = ['Microphone']  # Ensure microphone is selected
 
             if not self.device_spinner.text or self.device_spinner.text == "No input devices found":
                 print("Please select a valid input device.")
@@ -309,28 +335,32 @@ class AudioRecorderApp(App):
 
         buffer_duration = float(self.duration_input.text)
 
-        for app, frames in self.frames.items():
+        # Если включена опция раздельной записи
+        if self.separate_audio_checkbox.active:
+            for app, frames in self.frames.items():
+                current_frames = list(frames)
+                
+                # Пропускаем пустые буферы
+                if not current_frames:
+                    continue
 
-            current_frames = list(frames)
+                # Очистка буфера после сохранения
+                self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
 
-            self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
-
-
-            if current_frames:
                 audio_data = np.concatenate(current_frames)
                 format_type = self.format_spinner.text
                 bitrate = self.bitrate_spinner.text
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 recordings_folder = "Recordings"
-                if app == 'combined':
-                    filename = os.path.join(recordings_folder, f"combined_recording_{timestamp}.{format_type.lower()}")
-                elif app == 'Microphone':
-                  filename = os.path.join(recordings_folder, f"microphone_recording_{timestamp}.{format_type.lower()}")
+
+                # Формируем имя файла в зависимости от источника
+                if app == 'Microphone':
+                    filename = os.path.join(recordings_folder, f"microphone_recording_{timestamp}.{format_type.lower()}")
                 else:
                     app_name = app.split(":")[0]
                     filename = os.path.join(recordings_folder, f"{app_name}_recording_{timestamp}.{format_type.lower()}")
-                temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}.wav")
 
+                temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}_{app}.wav")
                 os.makedirs(recordings_folder, exist_ok=True)
 
                 try:
@@ -376,6 +406,64 @@ class AudioRecorderApp(App):
                     print(f"Error saving audio: {e}")
                     if os.path.exists(temp_wav):
                         os.remove(temp_wav)
+        else:
+            # Для комбинированной записи используем существующую логику
+            if 'combined' in self.frames:
+                current_frames = list(self.frames['combined'])
+                if current_frames:
+                    audio_data = np.concatenate(current_frames)
+                    format_type = self.format_spinner.text
+                    bitrate = self.bitrate_spinner.text
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    recordings_folder = "Recordings"
+                    filename = os.path.join(recordings_folder, f"combined_recording_{timestamp}.{format_type.lower()}")
+                    temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}.wav")
+
+                    os.makedirs(recordings_folder, exist_ok=True)
+
+                    try:
+                        with wave.open(temp_wav, 'wb') as wf:
+                            wf.setnchannels(1)
+                            wf.setsampwidth(2)
+                            wf.setframerate(44100)
+                            wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
+
+                        if format_type == 'WAV':
+                            os.replace(temp_wav, filename)
+                        elif format_type == 'MP3':
+                            try:
+                                audio = AudioSegment.from_wav(temp_wav)
+                                audio.export(
+                                    filename,
+                                    format="mp3",
+                                    bitrate=bitrate,
+                                    parameters=["-q:a", "0"]
+                                )
+                            except Exception as e:
+                                print(f"Error converting to MP3: {e}")
+                                try:
+                                    from pydub.utils import which
+                                    AudioSegment.converter = which("ffmpeg")
+                                    audio = AudioSegment.from_wav(temp_wav)
+                                    audio.export(filename, format="mp3", bitrate=bitrate)
+                                except Exception as e2:
+                                    print(f"Alternative method also failed: {e2}")
+                        elif format_type == 'FLAC':
+                            sf.write(filename, audio_data, 44100, format='FLAC')
+                        elif format_type == 'OGG':
+                            sf.write(filename, audio_data, 44100, format='OGG')
+
+                        if format_type != 'WAV' and os.path.exists(temp_wav):
+                            os.remove(temp_wav)
+
+                        print(f"Saved to {filename}")
+                        duration = len(audio_data) / 44100
+                        print(f"Recording duration: {duration:.2f} seconds")
+
+                    except Exception as e:
+                        print(f"Error saving audio: {e}")
+                        if os.path.exists(temp_wav):
+                            os.remove(temp_wav)
 
     def record_audio(self, device_index, app_name):
         FORMAT = pyaudio.paFloat32
@@ -398,23 +486,30 @@ class AudioRecorderApp(App):
         while not self.stop_recording:
             try:
                 data = stream.read(self.CHUNK, exception_on_overflow=False)
+                audio_data = np.frombuffer(data, dtype=np.float32)
+
+                # Ensure the array is writable
+                audio_data = np.array(audio_data, copy=True)
+
+                # Apply gain
+                audio_data *= self.GAIN
 
                 if self.is_recording:
-                    audio_data = np.frombuffer(data, dtype=np.float32)
-
-                    if not self.separate_audio_checkbox.active:
-                      self.frames[app_name].append(audio_data)
-                     
-                    elif app_name == "Microphone":
-                        self.frames[app_name].append(audio_data)
-                        
-                    
-                    else:
-                        pid = int(app_name.split(":")[1])
-                        hwnd = win32process.GetWindowThreadProcessId(win32gui.GetForegroundWindow())
-                        if pid == hwnd[1]:
+                    if self.separate_audio_checkbox.active:
+                        # Separate recording
+                        if app_name == "Microphone":
                             self.frames[app_name].append(audio_data)
-
+                        else:
+                            pid = int(app_name.split(":")[1])
+                            hwnd = win32gui.GetForegroundWindow()
+                            _, foreground_pid = win32process.GetWindowThreadProcessId(hwnd)
+                            if pid == foreground_pid:
+                                self.frames[app_name].append(audio_data)
+                    else:
+                        # Combined recording, including microphone
+                        if 'combined' not in self.frames:
+                            self.frames['combined'] = deque(maxlen=int(44100 * float(self.duration_input.text) / self.CHUNK))
+                        self.frames['combined'].append(audio_data)
 
             except Exception as e:
                 print(f"Error during recording for {app_name}: {e}")

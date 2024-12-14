@@ -3,5 +3,5 @@
     "duration": "60",
     "format": "WAV",
     "bitrate": "192k",
-    "separate_audio": false
+    "separate_audio": true
 }
