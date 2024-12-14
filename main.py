@@ -27,6 +27,9 @@ from comtypes import CLSCTX_ALL
 import time
 import win32gui
 import win32process
+import locale
+import chardet
+import ctypes
 
 
 def get_app_name_from_pid(pid):
@@ -194,15 +197,14 @@ class AudioRecorderApp(App):
     def get_running_applications_with_audio(self):
         apps = set()
         try:
-            active_pids = set()
             sessions = AudioUtilities.GetAllSessions()
             for session in sessions:
                 if session.Process and session.Process.name():
-                    if session.State == 2:
-                        apps.add(f"{session.Process.name()}:{session.ProcessId}")
-                        active_pids.add(session.Process.pid)
-
-
+                    volume = session.SimpleAudioVolume.GetMasterVolume()
+                    if session.State == 2 and volume > 0:  # Проверяем, что сессия активна и есть звук
+                        app_name = session.Process.name()
+                        pid = session.ProcessId
+                        apps.add(f"{app_name}:{pid}")
         except Exception as e:
             print(f"Error getting audio sessions: {e}")
 
@@ -215,14 +217,16 @@ class AudioRecorderApp(App):
             info = self.p.get_host_api_info_by_index(0)
             num_devices = info.get('deviceCount')
 
-
-
             for i in range(num_devices):
                 device_info = self.p.get_device_info_by_host_api_device_index(0, i)
                 if device_info.get('maxInputChannels') > 0:
-                    device_name = device_info.get('name')
-                    devices.append((i, device_name))
-                    self.device_indices[i] = i
+                    buffer = ctypes.create_string_buffer(256)
+                    ctypes.windll.kernel32.WideCharToMultiByte(
+                        0, 0, device_info.get('name'), -1, buffer, 256, None, None
+                    )
+                    device_name = buffer.value.decode('utf-8', 'ignore')
+                    devices.append((i + 1, device_name))  # Нумерация начинается с 1
+                    self.device_indices[i + 1] = i
 
         except Exception as e:
             print(f"Error getting input devices: {e}")
