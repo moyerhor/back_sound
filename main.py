@@ -78,13 +78,11 @@ class AudioRecorderApp(App):
         self.refresh_apps_button = Button(text="Refresh Apps", size_hint=(1, None), height=44)
         self.refresh_apps_button.bind(on_press=self.refresh_applications)
         
-        apps_scrollview = ScrollView()
+        apps_layout = BoxLayout(orientation='vertical', size_hint=(1, 1))
+        apps_scrollview = ScrollView(size_hint=(1, 1))
         apps_scrollview.add_widget(self.apps_grid)
-        
-        apps_layout = BoxLayout(orientation='vertical', size_hint=(1,None))
         apps_layout.add_widget(apps_scrollview)
         apps_layout.add_widget(self.refresh_apps_button)
-
 
         self.devices = self.get_input_devices()
         self.device_spinner = Spinner(
