@@ -427,31 +427,52 @@ class AudioRecorderApp(App):
                     os.remove(temp_wav)
 
     def record_audio(self, device_index, app_name):
+        FORMAT = pyaudio.paFloat32
+        CHANNELS = 1
         RATE = 44100
 
-        try:
-            with sd.InputStream(
-                samplerate=RATE,
-                channels=2,  # Для стерео
-                device=device_index,
-                dtype='float32',
-                blocksize=self.CHUNK
-            ) as stream:
-                self.streams[app_name] = stream
-                print(f"Recording started for {app_name}. Press 'k' to save buffer.")
+        stream = self.p.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            input_device_index=device_index,
+            frames_per_buffer=self.CHUNK
+        )
 
-                while not self.stop_recording:
-                    audio_data = stream.read(self.CHUNK)[0]  # Получить данные
-                    audio_data = np.mean(audio_data, axis=1)  # Преобразовать стерео в моно
-                    audio_data *= self.GAIN  # Применить усиление
+        self.streams[app_name] = stream
 
-                    if self.is_recording:
-                        self.frames[app_name].append(audio_data)
+        print(f"Recording started for {app_name}. Press 'k' to save buffer.")
 
-                print(f"Recording stopped for {app_name}")
+        while not self.stop_recording:
+            try:
+                data = stream.read(self.CHUNK, exception_on_overflow=False)
+                audio_data = np.frombuffer(data, dtype=np.float32)
 
-        except Exception as e:
-            print(f"Error during recording for {app_name}: {e}")
+                audio_data = np.array(audio_data, copy=True)
+
+                audio_data *= self.GAIN
+
+                if self.is_recording:
+                    if self.separate_audio_checkbox.active:
+                        if app_name == "Microphone":
+                            self.frames[app_name].append(audio_data)
+                        else:
+                            pid = int(app_name.split(":")[1])
+                            hwnd = win32gui.GetForegroundWindow()
+                            _, foreground_pid = win32process.GetWindowThreadProcessId(hwnd)
+                            if pid == foreground_pid:
+                                self.frames[app_name].append(audio_data)
+                    else:
+                        if 'combined' not in self.frames:
+                            self.frames['combined'] = deque(maxlen=int(44100 * float(self.duration_input.text) / self.CHUNK))
+                        self.frames['combined'].append(audio_data)
+
+            except Exception as e:
+                print(f"Error during recording for {app_name}: {e}")
+                break
+
+        print(f"Recording stopped for {app_name}")
 
     def on_stop(self):
         self.stop_recording_threads()
