@@ -31,6 +31,7 @@ import locale
 import chardet
 import ctypes
 import logging
+import sounddevice as sd
 
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger('pycaw').setLevel(logging.WARNING)
@@ -70,13 +71,13 @@ class AudioRecorderApp(App):
         self.apps_grid = GridLayout(cols=1, size_hint_y=None)
         self.apps_grid.bind(minimum_height=self.apps_grid.setter('height'))
 
-        self.refresh_apps_button = Button(text="Refresh Apps", size_hint=(1, None), height=44)
-        self.refresh_apps_button.bind(on_press=self.refresh_applications)
-        
         apps_layout = BoxLayout(orientation='vertical', size_hint=(1, 1))
         apps_scrollview = ScrollView(size_hint=(1, 1))
         apps_scrollview.add_widget(self.apps_grid)
         apps_layout.add_widget(apps_scrollview)
+
+        self.refresh_apps_button = Button(text="Refresh Apps", size_hint=(1, None), height=44)
+        self.refresh_apps_button.bind(on_press=self.refresh_applications)
         apps_layout.add_widget(self.refresh_apps_button)
 
         self.devices = self.get_input_devices()
@@ -88,40 +89,25 @@ class AudioRecorderApp(App):
         )
         self.device_spinner.bind(text=self.on_setting_change)
 
-        duration_layout = BoxLayout(size_hint=(1, None), height=44)
-        duration_layout.add_widget(Label(text='Buffer Duration (sec):'))
-        self.duration_input = TextInput(
-            text=str(self.settings.get('duration', '10')),
-            multiline=False,
-            input_filter='float',
-            size_hint=(0.7, None),
-            height=44
-        )
-        self.duration_input.bind(text=self.on_setting_change)
-        duration_layout.add_widget(self.duration_input)
+        format_bitrate_layout = BoxLayout(size_hint=(1, None), height=44, spacing=10)
 
         self.format_spinner = Spinner(
             text=self.settings.get('format', 'WAV'),
             values=('WAV', 'FLAC', 'OGG', 'MP3'),
-            size_hint=(1, None),
+            size_hint=(0.5, None),
             height=44
         )
         self.format_spinner.bind(text=self.on_setting_change)
+        format_bitrate_layout.add_widget(self.format_spinner)
 
         self.bitrate_spinner = Spinner(
             text=self.settings.get('bitrate', '192k'),
             values=('128k', '192k', '256k', '320k'),
-            size_hint=(1, None),
+            size_hint=(0.5, None),
             height=44
         )
         self.bitrate_spinner.bind(text=self.on_setting_change)
-
-        self.record_button = Button(
-            text='Start Recording',
-            size_hint=(1, None),
-            height=50
-        )
-        self.record_button.bind(on_press=self.toggle_recording)
+        format_bitrate_layout.add_widget(self.bitrate_spinner)
 
         self.separate_audio_checkbox = CheckBox(active=self.settings.get('separate_audio', False), size_hint=(None, None), size=(44, 44))
         self.separate_audio_checkbox.bind(active=self.on_setting_change)
@@ -130,13 +116,38 @@ class AudioRecorderApp(App):
         separate_audio_layout.add_widget(Label(text='Separate Audio: '))
         separate_audio_layout.add_widget(self.separate_audio_checkbox)
 
+        record_duration_layout = BoxLayout(size_hint=(1, None), height=44, spacing=10)
+
+        duration_label = Label(
+            text='Buffer Duration (sec):',
+            size_hint=(0.5, 1),
+            halign='left'
+        )
+        record_duration_layout.add_widget(duration_label)
+
+        self.duration_input = TextInput(
+            text=str(self.settings.get('duration', '10')),
+            multiline=False,
+            input_filter='float',
+            size_hint=(0.5, None),
+            height=44
+        )
+        self.duration_input.bind(text=self.on_setting_change)
+        record_duration_layout.add_widget(self.duration_input)
+
+        self.record_button = Button(
+            text='Start Recording',
+            size_hint=(0.5, None),
+            height=44
+        )
+        self.record_button.bind(on_press=self.toggle_recording)
+        record_duration_layout.add_widget(self.record_button)
+
         layout.add_widget(apps_layout)
         layout.add_widget(self.device_spinner)
-        layout.add_widget(duration_layout)
-        layout.add_widget(self.format_spinner)
-        layout.add_widget(self.bitrate_spinner)
+        layout.add_widget(format_bitrate_layout)
         layout.add_widget(separate_audio_layout)
-        layout.add_widget(self.record_button)
+        layout.add_widget(record_duration_layout)
 
         Clock.schedule_interval(self.update_apps_list, 5)
 
@@ -181,22 +192,21 @@ class AudioRecorderApp(App):
             apps = self.get_running_applications_with_audio()
             self.apps_grid.clear_widgets()
 
-            if not apps or apps == ['No Audio Applications Found']:
-                self.apps_grid.add_widget(Label(text="No Audio Applications Found", size_hint_y=None, height=44))
-                self.selected_apps = ['Microphone']
-            else:
-                for app in apps:
-                    layout = BoxLayout(size_hint_y=None, height=44)
-                    label = Label(text=app, size_hint_x=0.8)
-                    checkbox = CheckBox(size_hint_x=0.2)
-                    checkbox.bind(active=self.on_app_checkbox_update)
+            # Add microphone as a separate option
+            apps.insert(0, 'Microphone')
 
-                    if app in current_selected_apps:
-                        checkbox.active = True
+            for app in apps:
+                layout = BoxLayout(size_hint_y=None, height=44)
+                label = Label(text=app, size_hint_x=0.8)
+                checkbox = CheckBox(size_hint_x=0.2)
+                checkbox.bind(active=self.on_app_checkbox_update)
 
-                    layout.add_widget(label)
-                    layout.add_widget(checkbox)
-                    self.apps_grid.add_widget(layout)
+                if app in current_selected_apps:
+                    checkbox.active = True
+
+                layout.add_widget(label)
+                layout.add_widget(checkbox)
+                self.apps_grid.add_widget(layout)
         finally:
             logging.getLogger().setLevel(original_level)
 
@@ -223,28 +233,40 @@ class AudioRecorderApp(App):
             print(f"Error getting audio sessions: {e}")
 
         return sorted(list(apps)) if apps else ['No Audio Applications Found']
+    
+    def get_wasapi_loopback_devices(self):
+        try:
+            devices = sd.query_devices()
+            loopback_devices = []
+            for idx, dev in enumerate(devices):
+                if 'hostapi' in dev and dev.get('max_input_channels', 0) > 0:
+                    loopback_devices.append((idx, dev['name']))
+            return loopback_devices
+        except Exception as e:
+            print(f"Error getting WASAPI loopback devices: {e}")
+            return []
 
     def get_input_devices(self):
         devices = []
         self.device_indices = {}
         try:
-            info = self.p.get_host_api_info_by_index(0)
-            num_devices = info.get('deviceCount')
-
-            for i in range(num_devices):
-                device_info = self.p.get_device_info_by_host_api_device_index(0, i)
-                if device_info.get('maxInputChannels') > 0:
-                    buffer = ctypes.create_string_buffer(256)
-                    ctypes.windll.kernel32.WideCharToMultiByte(
-                        0, 0, device_info.get('name'), -1, buffer, 256, None, None
-                    )
-                    device_name = buffer.value.decode('utf-8', 'ignore')
-                    devices.append((i + 1, device_name))
-                    self.device_indices[i + 1] = i
-
+            loopback_devices = self.get_wasapi_loopback_devices()
+            if isinstance(loopback_devices, list):
+                for i, device in enumerate(loopback_devices):
+                    if isinstance(device, tuple) and len(device) == 2:
+                        index, name = device
+                        devices.append((index, name))
+                        self.device_indices[index] = index
         except Exception as e:
-            print(f"Error getting input devices: {e}")
+            print(f"Error getting WASAPI loopback devices: {e}")
             return ["No input devices found"]
+
+        # If no devices were found, return a default message
+        if not devices:
+            return ["No input devices found"]
+
+        # Debugging: Print the devices list to see its structure
+        print("Devices found:", devices)
 
         return devices
 
@@ -316,6 +338,13 @@ class AudioRecorderApp(App):
                     last_save_time = current_time
             time.sleep(0.05)
 
+    def sanitize_filename(self, filename):
+        # Remove or replace invalid characters
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        return filename
+
     def save_current_buffer(self):
         if not self.frames:
             return
@@ -327,7 +356,6 @@ class AudioRecorderApp(App):
         for app, frames in self.frames.items():
             current_frames = list(frames)
             
-            # Проверка наличия данных в буфере
             if not current_frames:
                 print(f"No data to save for {app}")
                 continue
@@ -342,10 +370,12 @@ class AudioRecorderApp(App):
             elif app == 'combined':
                 filename = os.path.join(recordings_folder, f"combined_recording_{timestamp}.{format_type.lower()}")
             else:
-                app_name = app.split(":")[0]
-                filename = os.path.join(recordings_folder, f"{app_name}_recording_{timestamp}.{format_type.lower()}")
+                app_name = app.split(":")[0]  # Get only the application name part
+                safe_app_name = self.sanitize_filename(app_name)
+                filename = os.path.join(recordings_folder, f"{safe_app_name}_recording_{timestamp}.{format_type.lower()}")
 
-            temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}_{app}.wav")
+            # Also sanitize the temporary filename
+            temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}_{self.sanitize_filename(app)}.wav")
 
             try:
                 with wave.open(temp_wav, 'wb') as wf:
@@ -386,7 +416,7 @@ class AudioRecorderApp(App):
                 duration = len(audio_data) / 44100
                 print(f"Recording duration: {duration:.2f} seconds")
 
-                # Очистка буфера после успешного сохранения
+                # Очистка бфера после успешного сохранения
                 if self.separate_audio_checkbox.active or app == 'combined':
                   self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
 
@@ -397,52 +427,31 @@ class AudioRecorderApp(App):
                     os.remove(temp_wav)
 
     def record_audio(self, device_index, app_name):
-        FORMAT = pyaudio.paFloat32
-        CHANNELS = 1
         RATE = 44100
 
-        stream = self.p.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            input_device_index=device_index,
-            frames_per_buffer=self.CHUNK
-        )
+        try:
+            with sd.InputStream(
+                samplerate=RATE,
+                channels=2,  # Для стерео
+                device=device_index,
+                dtype='float32',
+                blocksize=self.CHUNK
+            ) as stream:
+                self.streams[app_name] = stream
+                print(f"Recording started for {app_name}. Press 'k' to save buffer.")
 
-        self.streams[app_name] = stream
+                while not self.stop_recording:
+                    audio_data = stream.read(self.CHUNK)[0]  # Получить данные
+                    audio_data = np.mean(audio_data, axis=1)  # Преобразовать стерео в моно
+                    audio_data *= self.GAIN  # Применить усиление
 
-        print(f"Recording started for {app_name}. Press 'k' to save buffer.")
+                    if self.is_recording:
+                        self.frames[app_name].append(audio_data)
 
-        while not self.stop_recording:
-            try:
-                data = stream.read(self.CHUNK, exception_on_overflow=False)
-                audio_data = np.frombuffer(data, dtype=np.float32)
+                print(f"Recording stopped for {app_name}")
 
-                audio_data = np.array(audio_data, copy=True)
-
-                audio_data *= self.GAIN
-
-                if self.is_recording:
-                    if self.separate_audio_checkbox.active:
-                        if app_name == "Microphone":
-                            self.frames[app_name].append(audio_data)
-                        else:
-                            pid = int(app_name.split(":")[1])
-                            hwnd = win32gui.GetForegroundWindow()
-                            _, foreground_pid = win32process.GetWindowThreadProcessId(hwnd)
-                            if pid == foreground_pid:
-                                self.frames[app_name].append(audio_data)
-                    else:
-                        if 'combined' not in self.frames:
-                            self.frames['combined'] = deque(maxlen=int(44100 * float(self.duration_input.text) / self.CHUNK))
-                        self.frames['combined'].append(audio_data)
-
-            except Exception as e:
-                print(f"Error during recording for {app_name}: {e}")
-                break
-
-        print(f"Recording stopped for {app_name}")
+        except Exception as e:
+            print(f"Error during recording for {app_name}: {e}")
 
     def on_stop(self):
         self.stop_recording_threads()
