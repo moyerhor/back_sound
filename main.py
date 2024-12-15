@@ -250,23 +250,23 @@ class AudioRecorderApp(App):
         devices = []
         self.device_indices = {}
         try:
-            loopback_devices = self.get_wasapi_loopback_devices()
-            if isinstance(loopback_devices, list):
-                for i, device in enumerate(loopback_devices):
-                    if isinstance(device, tuple) and len(device) == 2:
-                        index, name = device
-                        devices.append((index, name))
-                        self.device_indices[index] = index
+            info = self.p.get_host_api_info_by_index(0)
+            num_devices = info.get('deviceCount')
+
+            for i in range(num_devices):
+                device_info = self.p.get_device_info_by_host_api_device_index(0, i)
+                if device_info.get('maxInputChannels') > 0:
+                    buffer = ctypes.create_string_buffer(256)
+                    ctypes.windll.kernel32.WideCharToMultiByte(
+                        0, 0, device_info.get('name'), -1, buffer, 256, None, None
+                    )
+                    device_name = buffer.value.decode('utf-8', 'ignore')
+                    devices.append((i + 1, device_name))
+                    self.device_indices[i + 1] = i
+
         except Exception as e:
-            print(f"Error getting WASAPI loopback devices: {e}")
+            print(f"Error getting input devices: {e}")
             return ["No input devices found"]
-
-        # If no devices were found, return a default message
-        if not devices:
-            return ["No input devices found"]
-
-        # Debugging: Print the devices list to see its structure
-        print("Devices found:", devices)
 
         return devices
 
