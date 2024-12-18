@@ -52,9 +52,9 @@ class AudioRecorderApp(App):
     GAIN = 1.0
 
     def build(self):
-        Window.size = (500, 400)  # Set initial window size
-        Window.minimum_width = 500  # Set minimum width
-        Window.minimum_height = 400  # Set minimum height
+        Window.size = (500, 400)
+        Window.minimum_width = 500
+        Window.minimum_height = 400
 
         self.title = 'Audio Recorder'
         self.settings_file = 'recorder_settings.json'
@@ -67,23 +67,10 @@ class AudioRecorderApp(App):
         self.key_thread = None
         self.stop_recording = False
         self.devices = []
-        self.selected_apps = []
 
         self.settings = self.load_settings()
 
         layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        
-        self.apps_grid = GridLayout(cols=1, size_hint_y=None)
-        self.apps_grid.bind(minimum_height=self.apps_grid.setter('height'))
-
-        apps_layout = BoxLayout(orientation='vertical', size_hint=(1, 1))
-        apps_scrollview = ScrollView(size_hint=(1, 1))
-        apps_scrollview.add_widget(self.apps_grid)
-        apps_layout.add_widget(apps_scrollview)
-
-        self.refresh_apps_button = Button(text="Refresh Apps", size_hint=(1, None), height=44)
-        self.refresh_apps_button.bind(on_press=self.refresh_applications)
-        apps_layout.add_widget(self.refresh_apps_button)
 
         self.devices = self.get_input_devices()
         self.device_spinner = Spinner(
@@ -156,22 +143,15 @@ class AudioRecorderApp(App):
         self.record_button.bind(on_press=self.toggle_recording)
         record_duration_layout.add_widget(self.record_button)
 
-        layout.add_widget(apps_layout)
         layout.add_widget(self.device_spinner)
         layout.add_widget(self.device_spinner2)
         layout.add_widget(format_bitrate_layout)
         layout.add_widget(self.recording_mode_button)
         layout.add_widget(record_duration_layout)
 
-        Clock.schedule_interval(self.update_apps_list, 5)
-
-        # Initialize apps visibility based on current mode
+        # Initialize recording mode
         is_separate = self.settings.get('separate_audio', False)
         self.recording_mode_button.text = 'Mode: Separate' if is_separate else 'Mode: Combined'
-        self.apps_grid.opacity = 1 if is_separate else 0
-        self.apps_grid.disabled = not is_separate
-        self.refresh_apps_button.opacity = 1 if is_separate else 0
-        self.refresh_apps_button.disabled = not is_separate
 
         return layout
 
@@ -202,73 +182,6 @@ class AudioRecorderApp(App):
     def on_setting_change(self, *args):
         self.save_settings()
 
-    def refresh_applications(self, instance):
-        self.update_apps_list()
-
-    def update_apps_list(self, dt=0):
-        original_level = logging.getLogger().level
-        logging.getLogger().setLevel(logging.WARNING)
-
-        try:
-            current_selected_apps = set(self.selected_apps)
-
-            apps = self.get_running_applications_with_audio()
-            self.apps_grid.clear_widgets()
-
-            # Add microphone as a separate option
-            apps.insert(0, 'Microphone')
-
-            for app in apps:
-                layout = BoxLayout(size_hint_y=None, height=44)
-                label = Label(text=app, size_hint_x=0.8)
-                checkbox = CheckBox(size_hint_x=0.2)
-                checkbox.bind(active=self.on_app_checkbox_update)
-
-                if app in current_selected_apps:
-                    checkbox.active = True
-
-                layout.add_widget(label)
-                layout.add_widget(checkbox)
-                self.apps_grid.add_widget(layout)
-        finally:
-            logging.getLogger().setLevel(original_level)
-
-    def on_app_checkbox_update(self, checkbox, value):
-        if checkbox.parent:
-            app_name = checkbox.parent.children[1].text
-            if value:
-                if app_name not in self.selected_apps:
-                    self.selected_apps.append(app_name)
-            else:
-                if app_name in self.selected_apps:
-                    self.selected_apps.remove(app_name)
-
-    def get_running_applications_with_audio(self):
-        apps = set()
-        try:
-            sessions = AudioUtilities.GetAllSessions()
-            for session in sessions:
-                if session.Process and session.Process.name():
-                    app_name = session.Process.name()
-                    pid = session.ProcessId
-                    apps.add(f"{app_name}:{pid}")
-        except Exception as e:
-            print(f"Error getting audio sessions: {e}")
-
-        return sorted(list(apps)) if apps else ['No Audio Applications Found']
-    
-    def get_wasapi_loopback_devices(self):
-        try:
-            devices = sd.query_devices()
-            loopback_devices = []
-            for idx, dev in enumerate(devices):
-                if 'hostapi' in dev and dev.get('max_input_channels', 0) > 0:
-                    loopback_devices.append((idx, dev['name']))
-            return loopback_devices
-        except Exception as e:
-            print(f"Error getting WASAPI loopback devices: {e}")
-            return []
-
     def get_input_devices(self):
         devices = []
         self.device_indices = {}
@@ -298,9 +211,6 @@ class AudioRecorderApp(App):
 
     def toggle_recording(self, instance):
         if not self.is_recording:
-            if not self.selected_apps or self.selected_apps == ['Microphone']:
-                self.selected_apps = ['Microphone']
-
             self.frames = {}
             self.start_recording()
         else:
@@ -341,12 +251,6 @@ class AudioRecorderApp(App):
                     device_index2 = self.device_indices.get(selected_number)
                 except:
                     device_index2 = None
-
-            apps_to_record = self.selected_apps
-
-            for app in apps_to_record:
-                if app != 'No Audio Applications Found':
-                    self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
 
             self.recording_threads = {}
             
@@ -399,78 +303,77 @@ class AudioRecorderApp(App):
         recordings_folder = "Recordings"
         os.makedirs(recordings_folder, exist_ok=True)
 
-        for app, frames in self.frames.items():
-            current_frames = list(frames)
-            
-            if not current_frames:
-                print(f"No data to save for {app}")
-                continue
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        format_type = self.format_spinner.text
+        bitrate = self.bitrate_spinner.text
 
-            audio_data = np.concatenate(current_frames)
-            format_type = self.format_spinner.text
-            bitrate = self.bitrate_spinner.text
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if self.settings['separate_audio']:
+            # Separate mode: save each device separately
+            for device_name, frames in self.frames.items():
+                current_frames = list(frames)
+                if not current_frames:
+                    continue
 
-            if app == 'Microphone':
-                filename = os.path.join(recordings_folder, f"microphone_recording_{timestamp}.{format_type.lower()}")
-            elif app == 'combined':
-                filename = os.path.join(recordings_folder, f"combined_recording_{timestamp}.{format_type.lower()}")
-            else:
-                app_name = app.split(":")[0]  # Get only the application name part
-                safe_app_name = self.sanitize_filename(app_name)
-                filename = os.path.join(recordings_folder, f"{safe_app_name}_recording_{timestamp}.{format_type.lower()}")
+                audio_data = np.concatenate(current_frames)
+                filename = os.path.join(recordings_folder, f"{device_name}_{timestamp}.{format_type.lower()}")
+                temp_wav = os.path.join(recordings_folder, f"temp_{device_name}_{timestamp}.wav")
 
-            # Also sanitize the temporary filename
-            temp_wav = os.path.join(recordings_folder, f"temp_recording_{timestamp}_{self.sanitize_filename(app)}.wav")
+                try:
+                    self.save_audio_file(audio_data, temp_wav, filename, format_type, bitrate)
+                    print(f"Saved {device_name} to {filename}")
+                except Exception as e:
+                    print(f"Error saving audio for {device_name}: {e}")
 
-            try:
-                with wave.open(temp_wav, 'wb') as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(44100)
-                    wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-
-                if format_type == 'WAV':
-                    os.replace(temp_wav, filename)
-                elif format_type == 'MP3':
+        else:
+            # Combined mode: mix and save as one file
+            if len(self.frames) == 2:
+                frames1 = list(self.frames['device1'])
+                frames2 = list(self.frames['device2'])
+                
+                if frames1 and frames2:
+                    audio_data1 = np.concatenate(frames1)
+                    audio_data2 = np.concatenate(frames2)
+                    
+                    # Ensure both arrays are the same length
+                    min_length = min(len(audio_data1), len(audio_data2))
+                    audio_data1 = audio_data1[:min_length]
+                    audio_data2 = audio_data2[:min_length]
+                    
+                    # Mix the audio
+                    combined_audio = (audio_data1 + audio_data2) / 2.0
+                    
+                    filename = os.path.join(recordings_folder, f"combined_{timestamp}.{format_type.lower()}")
+                    temp_wav = os.path.join(recordings_folder, f"temp_combined_{timestamp}.wav")
+                    
                     try:
-                        audio = AudioSegment.from_wav(temp_wav)
-                        audio.export(
-                            filename,
-                            format="mp3",
-                            bitrate=bitrate,
-                            parameters=["-q:a", "0"]
-                        )
+                        self.save_audio_file(combined_audio, temp_wav, filename, format_type, bitrate)
+                        print(f"Saved combined audio to {filename}")
                     except Exception as e:
-                        print(f"Error converting to MP3: {e}")
-                        try:
-                            from pydub.utils import which
-                            AudioSegment.converter = which("ffmpeg")
-                            audio = AudioSegment.from_wav(temp_wav)
-                            audio.export(filename, format="mp3", bitrate=bitrate)
-                        except Exception as e2:
-                            print(f"Alternative method also failed: {e2}")
-                elif format_type == 'FLAC':
-                    sf.write(filename, audio_data, 44100, format='FLAC')
-                elif format_type == 'OGG':
-                    sf.write(filename, audio_data, 44100, format='OGG')
+                        print(f"Error saving combined audio: {e}")
 
-                if format_type != 'WAV' and os.path.exists(temp_wav):
-                    os.remove(temp_wav)
+    def save_audio_file(self, audio_data, temp_wav, filename, format_type, bitrate):
+        try:
+            with wave.open(temp_wav, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(44100)
+                wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
 
-                print(f"Saved {app} to {filename}")
-                duration = len(audio_data) / 44100
-                print(f"Recording duration: {duration:.2f} seconds")
+            if format_type == 'WAV':
+                os.replace(temp_wav, filename)
+            elif format_type == 'MP3':
+                audio = AudioSegment.from_wav(temp_wav)
+                audio.export(filename, format="mp3", bitrate=bitrate)
+            elif format_type == 'FLAC':
+                sf.write(filename, audio_data, 44100, format='FLAC')
+            elif format_type == 'OGG':
+                sf.write(filename, audio_data, 44100, format='OGG')
 
-                # Очистка бфера после успешного сохранения
-                if self.settings['separate_audio'] or app == 'combined':
-                  self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
+            if format_type != 'WAV' and os.path.exists(temp_wav):
+                os.remove(temp_wav)
 
-
-            except Exception as e:
-                print(f"Error saving audio for {app}: {e}")
-                if os.path.exists(temp_wav):
-                    os.remove(temp_wav)
+        except Exception as e:
+            raise Exception(f"Error in save_audio_file: {e}")
 
     def record_audio(self, device_index, device_name):
         FORMAT = pyaudio.paFloat32
@@ -541,19 +444,9 @@ class AudioRecorderApp(App):
         if self.recording_mode_button.text == 'Mode: Combined':
             self.recording_mode_button.text = 'Mode: Separate'
             self.settings['separate_audio'] = True
-            # Show apps selection
-            self.apps_grid.opacity = 1
-            self.apps_grid.disabled = False
-            self.refresh_apps_button.opacity = 1
-            self.refresh_apps_button.disabled = False
         else:
             self.recording_mode_button.text = 'Mode: Combined'
             self.settings['separate_audio'] = False
-            # Hide apps selection
-            self.apps_grid.opacity = 0
-            self.apps_grid.disabled = True
-            self.refresh_apps_button.opacity = 0
-            self.refresh_apps_button.disabled = True
         self.save_settings()
 
     def on_stop(self):
