@@ -87,12 +87,20 @@ class AudioRecorderApp(App):
 
         self.devices = self.get_input_devices()
         self.device_spinner = Spinner(
-            text=self.settings.get('device', 'Select Input Device'),
+            text=self.settings.get('device1', 'Select Input Device 1'),
             values=[f"{index}: {name}" for index, name in self.devices],
             size_hint=(1, None),
             height=44
         )
         self.device_spinner.bind(text=self.on_setting_change)
+
+        self.device_spinner2 = Spinner(
+            text=self.settings.get('device2', 'Select Input Device 2'),
+            values=[f"{index}: {name}" for index, name in self.devices],
+            size_hint=(1, None),
+            height=44
+        )
+        self.device_spinner2.bind(text=self.on_setting_change)
 
         format_bitrate_layout = BoxLayout(size_hint=(1, None), height=44, spacing=10)
 
@@ -150,6 +158,7 @@ class AudioRecorderApp(App):
 
         layout.add_widget(apps_layout)
         layout.add_widget(self.device_spinner)
+        layout.add_widget(self.device_spinner2)
         layout.add_widget(format_bitrate_layout)
         layout.add_widget(self.recording_mode_button)
         layout.add_widget(record_duration_layout)
@@ -177,7 +186,8 @@ class AudioRecorderApp(App):
 
     def save_settings(self):
         settings = {
-            'device': self.device_spinner.text,
+            'device1': self.device_spinner.text,
+            'device2': self.device_spinner2.text,
             'duration': self.duration_input.text,
             'format': self.format_spinner.text,
             'bitrate': self.bitrate_spinner.text,
@@ -263,6 +273,9 @@ class AudioRecorderApp(App):
         devices = []
         self.device_indices = {}
         try:
+            # Добавляем опцию "Отключено" как первое устройство
+            devices.append((0, "Отключено"))
+            
             info = self.p.get_host_api_info_by_index(0)
             num_devices = info.get('deviceCount')
 
@@ -288,10 +301,6 @@ class AudioRecorderApp(App):
             if not self.selected_apps or self.selected_apps == ['Microphone']:
                 self.selected_apps = ['Microphone']
 
-            if not self.device_spinner.text or self.device_spinner.text == "No input devices found":
-                print("Please select a valid input device.")
-                return
-
             self.frames = {}
             self.start_recording()
         else:
@@ -315,8 +324,23 @@ class AudioRecorderApp(App):
             self.record_button.text = 'Stop Recording'
             buffer_duration = float(self.duration_input.text)
 
-            selected_number = int(self.device_spinner.text.split(':')[0])
-            device_index = self.device_indices[selected_number]
+            # Получаем индексы обоих устройств
+            device_index1 = None
+            device_index2 = None
+
+            if not self.device_spinner.text.startswith("0:"):
+                try:
+                    selected_number = int(self.device_spinner.text.split(':')[0])
+                    device_index1 = self.device_indices.get(selected_number)
+                except:
+                    device_index1 = None
+
+            if not self.device_spinner2.text.startswith("0:"):
+                try:
+                    selected_number = int(self.device_spinner2.text.split(':')[0])
+                    device_index2 = self.device_indices.get(selected_number)
+                except:
+                    device_index2 = None
 
             apps_to_record = self.selected_apps
 
@@ -324,20 +348,29 @@ class AudioRecorderApp(App):
                 if app != 'No Audio Applications Found':
                     self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
 
-
             self.recording_threads = {}
-            for app in self.frames.keys():
-                thread = threading.Thread(target=self.record_audio, args=(device_index, app))
-                thread.daemon = True
-                self.recording_threads[app] = thread
-                thread.start()
+            
+            # Запускаем потоки для каждого устройства
+            if device_index1 is not None:
+                thread1 = threading.Thread(target=self.record_audio, args=(device_index1, 'device1'))
+                thread1.daemon = True
+                self.recording_threads['device1'] = thread1
+                thread1.start()
+
+            if device_index2 is not None:
+                thread2 = threading.Thread(target=self.record_audio, args=(device_index2, 'device2'))
+                thread2.daemon = True
+                self.recording_threads['device2'] = thread2
+                thread2.start()
 
             self.key_thread = threading.Thread(target=self.check_key)
             self.key_thread.daemon = True
             self.key_thread.start()
 
         except Exception as e:
-            print(f"Error starting recording: {e}")
+            print(f"Error starting recording: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def check_key(self):
         last_save_time = 0
@@ -439,53 +472,70 @@ class AudioRecorderApp(App):
                 if os.path.exists(temp_wav):
                     os.remove(temp_wav)
 
-    def record_audio(self, device_index, app_name):
+    def record_audio(self, device_index, device_name):
         FORMAT = pyaudio.paFloat32
         CHANNELS = 1
         RATE = 44100
 
-        stream = self.p.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            input_device_index=device_index,
-            frames_per_buffer=self.CHUNK
-        )
+        try:
+            stream = self.p.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                input=True,
+                input_device_index=device_index,
+                frames_per_buffer=self.CHUNK
+            )
+            self.streams[device_name] = stream
 
-        self.streams[app_name] = stream
+            print(f"Recording started for {device_name}. Press 'k' to save buffer.")
 
-        print(f"Recording started for {app_name}. Press 'k' to save buffer.")
+            while not self.stop_recording:
+                try:
+                    data = stream.read(self.CHUNK, exception_on_overflow=False)
+                    audio_data = np.frombuffer(data, dtype=np.float32)
+                    audio_data = np.array(audio_data, copy=True)
+                    audio_data *= self.GAIN
 
-        while not self.stop_recording:
-            try:
-                data = stream.read(self.CHUNK, exception_on_overflow=False)
-                audio_data = np.frombuffer(data, dtype=np.float32)
+                    if device_name not in self.frames:
+                        self.frames[device_name] = deque(maxlen=int(44100 * float(self.duration_input.text) / self.CHUNK))
+                    self.frames[device_name].append(audio_data)
 
-                audio_data = np.array(audio_data, copy=True)
+                except Exception as e:
+                    print(f"Error during recording: {e}")
+                    break
 
-                audio_data *= self.GAIN
+        except Exception as e:
+            print(f"Error setting up stream for {device_name}: {e}")
 
-                if self.is_recording:
-                    if self.settings['separate_audio']:
-                        if app_name == "Microphone":
-                            self.frames[app_name].append(audio_data)
-                        else:
-                            pid = int(app_name.split(":")[1])
-                            hwnd = win32gui.GetForegroundWindow()
-                            _, foreground_pid = win32process.GetWindowThreadProcessId(hwnd)
-                            if pid == foreground_pid:
-                                self.frames[app_name].append(audio_data)
-                    else:
-                        if 'combined' not in self.frames:
-                            self.frames['combined'] = deque(maxlen=int(44100 * float(self.duration_input.text) / self.CHUNK))
-                        self.frames['combined'].append(audio_data)
+        print(f"Recording stopped for {device_name}")
 
-            except Exception as e:
-                print(f"Error during recording for {app_name}: {e}")
-                break
-
-        print(f"Recording stopped for {app_name}")
+    def get_wasapi_loopback_device(self):
+        """Get the WASAPI loopback device index for system audio capture"""
+        try:
+            devices = sd.query_devices()
+            for i, device in enumerate(devices):
+                if ('WASAPI' in device['name'] and 
+                    device.get('max_input_channels', 0) > 0 and 
+                    'loopback' in device['name'].lower()):
+                    return i
+                
+            # Fallback: try to find any stereo mix device
+            for i, device in enumerate(devices):
+                if any(name in device['name'] for name in ['Stereo Mix', 'What U Hear', 'Stereo Mixer']):
+                    return i
+                
+            # If still not found, try to find default Windows WASAPI device
+            default_device = sd.default.device[0]  # Get default input device
+            if default_device is not None:
+                return default_device
+                
+        except Exception as e:
+            print(f"Error finding WASAPI loopback device: {e}")
+            
+        print("Available audio devices:")
+        print(sd.query_devices())
+        return None
 
     def toggle_recording_mode(self, instance):
         if self.recording_mode_button.text == 'Mode: Combined':
