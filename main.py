@@ -389,13 +389,18 @@ class AudioRecorderApp(App):
             self._save_combined_audio(recordings_folder, timestamp, format_type, bitrate)
 
     def _save_separate_audio(self, recordings_folder, timestamp, format_type, bitrate):
+        # Форматируем timestamp в нужный формат
+        formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%d.%m.%Y - %H.%M.%S")
+        
         for device_name, frames in self.frames.items():
             current_frames = list(frames)
             if not current_frames:
                 continue
 
             audio_data = np.concatenate(current_frames)
-            filename = os.path.join(recordings_folder, f"{device_name}_{timestamp}.{format_type.lower()}")
+            # Определяем префикс в зависимости от устройства
+            prefix = "mic" if device_name == "device1" else "desk"
+            filename = os.path.join(recordings_folder, f"{prefix} - {formatted_time}.{format_type.lower()}")
             temp_wav = os.path.join(recordings_folder, f"temp_{device_name}_{timestamp}.wav")
 
             try:
@@ -405,6 +410,9 @@ class AudioRecorderApp(App):
                 print(f"Error saving audio for {device_name}: {e}")
 
     def _save_combined_audio(self, recordings_folder, timestamp, format_type, bitrate):
+        # Форматируем timestamp в нужный формат
+        formatted_time = datetime.strptime(timestamp, "%Y%m%d_%H%M%S").strftime("%d.%m.%Y - %H.%M.%S")
+        
         if len(self.frames) == 2:
             frames1 = list(self.frames['device1'])
             frames2 = list(self.frames['device2'])
@@ -419,7 +427,7 @@ class AudioRecorderApp(App):
                 
                 combined_audio = (audio_data1 + audio_data2) / 2.0
                 
-                filename = os.path.join(recordings_folder, f"combined_{timestamp}.{format_type.lower()}")
+                filename = os.path.join(recordings_folder, f"{formatted_time}.{format_type.lower()}")
                 temp_wav = os.path.join(recordings_folder, f"temp_combined_{timestamp}.wav")
                 
                 try:

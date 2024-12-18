@@ -1,9 +1,9 @@
 {
     "device1": "2: Микрофон (Fifine Microphone)",
     "device2": "3: Line 1 (Virtual Audio Cable)",
-    "duration": "1",
-    "time_unit": "минут",
+    "duration": "10",
+    "time_unit": "секунд",
     "format": "MP3",
-    "bitrate": "192k",
-    "separate_audio": true
+    "bitrate": "320k",
+    "separate_audio": false
 }
