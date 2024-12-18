@@ -8,6 +8,7 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.checkbox import CheckBox, ToggleButtonBehavior
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
+from kivy.core.window import Window
 
 import pyaudio
 import wave
@@ -51,6 +52,10 @@ class AudioRecorderApp(App):
     GAIN = 1.0
 
     def build(self):
+        Window.size = (500, 400)  # Set initial window size
+        Window.minimum_width = 500  # Set minimum width
+        Window.minimum_height = 400  # Set minimum height
+
         self.title = 'Audio Recorder'
         self.settings_file = 'recorder_settings.json'
 
@@ -109,12 +114,12 @@ class AudioRecorderApp(App):
         self.bitrate_spinner.bind(text=self.on_setting_change)
         format_bitrate_layout.add_widget(self.bitrate_spinner)
 
-        self.separate_audio_checkbox = CheckBox(active=self.settings.get('separate_audio', False), size_hint=(None, None), size=(44, 44))
-        self.separate_audio_checkbox.bind(active=self.on_setting_change)
-
-        separate_audio_layout = BoxLayout(size_hint=(1, None), height=44)
-        separate_audio_layout.add_widget(Label(text='Separate Audio: '))
-        separate_audio_layout.add_widget(self.separate_audio_checkbox)
+        self.recording_mode_button = Button(
+            text='Mode: Combined',
+            size_hint=(1, None),
+            height=44
+        )
+        self.recording_mode_button.bind(on_press=self.toggle_recording_mode)
 
         record_duration_layout = BoxLayout(size_hint=(1, None), height=44, spacing=10)
 
@@ -146,10 +151,18 @@ class AudioRecorderApp(App):
         layout.add_widget(apps_layout)
         layout.add_widget(self.device_spinner)
         layout.add_widget(format_bitrate_layout)
-        layout.add_widget(separate_audio_layout)
+        layout.add_widget(self.recording_mode_button)
         layout.add_widget(record_duration_layout)
 
         Clock.schedule_interval(self.update_apps_list, 5)
+
+        # Initialize apps visibility based on current mode
+        is_separate = self.settings.get('separate_audio', False)
+        self.recording_mode_button.text = 'Mode: Separate' if is_separate else 'Mode: Combined'
+        self.apps_grid.opacity = 1 if is_separate else 0
+        self.apps_grid.disabled = not is_separate
+        self.refresh_apps_button.opacity = 1 if is_separate else 0
+        self.refresh_apps_button.disabled = not is_separate
 
         return layout
 
@@ -168,7 +181,7 @@ class AudioRecorderApp(App):
             'duration': self.duration_input.text,
             'format': self.format_spinner.text,
             'bitrate': self.bitrate_spinner.text,
-            'separate_audio': self.separate_audio_checkbox.active
+            'separate_audio': self.settings['separate_audio']
         }
         try:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
@@ -417,7 +430,7 @@ class AudioRecorderApp(App):
                 print(f"Recording duration: {duration:.2f} seconds")
 
                 # Очистка бфера после успешного сохранения
-                if self.separate_audio_checkbox.active or app == 'combined':
+                if self.settings['separate_audio'] or app == 'combined':
                   self.frames[app] = deque(maxlen=int(44100 * buffer_duration / self.CHUNK))
 
 
@@ -454,7 +467,7 @@ class AudioRecorderApp(App):
                 audio_data *= self.GAIN
 
                 if self.is_recording:
-                    if self.separate_audio_checkbox.active:
+                    if self.settings['separate_audio']:
                         if app_name == "Microphone":
                             self.frames[app_name].append(audio_data)
                         else:
@@ -473,6 +486,25 @@ class AudioRecorderApp(App):
                 break
 
         print(f"Recording stopped for {app_name}")
+
+    def toggle_recording_mode(self, instance):
+        if self.recording_mode_button.text == 'Mode: Combined':
+            self.recording_mode_button.text = 'Mode: Separate'
+            self.settings['separate_audio'] = True
+            # Show apps selection
+            self.apps_grid.opacity = 1
+            self.apps_grid.disabled = False
+            self.refresh_apps_button.opacity = 1
+            self.refresh_apps_button.disabled = False
+        else:
+            self.recording_mode_button.text = 'Mode: Combined'
+            self.settings['separate_audio'] = False
+            # Hide apps selection
+            self.apps_grid.opacity = 0
+            self.apps_grid.disabled = True
+            self.refresh_apps_button.opacity = 0
+            self.refresh_apps_button.disabled = True
+        self.save_settings()
 
     def on_stop(self):
         self.stop_recording_threads()

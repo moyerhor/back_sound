@@ -1,7 +1,7 @@
 {
     "device": "2: Микрофон (Fifine Microphone)",
-    "duration": "60",
-    "format": "WAV",
+    "duration": "10",
+    "format": "MP3",
     "bitrate": "192k",
-    "separate_audio": true
+    "separate_audio": false
 }
